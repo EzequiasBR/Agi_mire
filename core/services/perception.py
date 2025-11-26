@@ -1,27 +1,33 @@
-# core/services/perception.py (Versão com Integração Multimodal)
+# core/services/perception.py (Versão Final com Integração Multimodal)
 """
-PerceptionAPI – V4.3 (Com Suporte Arquitetural a Multimodal)
+PerceptionAPI – V4.3 (Suporte Multimodal Completo)
 """
 import numpy as np
 import time
 import logging
-import uuid # Adicionado para futuros metadados
+import uuid
 from typing import Any, Dict, Optional, Tuple
 
 from .security import Security
 
-# ... (imports existentes) ...
-# Simular importação dos novos Bridges
+# Tentativa de importar os Bridges reais
 try:
-    # Assumindo nova estrutura core/services/multimodal/
-    from .multimodal.audio_bridge import AudioBridge 
-    from .multimodal.vision_bridge import VisionBridge
+    from .multimodal.ovi_service.adapters.audio_bridge import AudioBridge
+    from .multimodal.ovi_service.adapters.vision_bridge import VisionBridge
 except ImportError:
-    # Fallback Mocks (mantido para execução local)
+    # Fallback Mocks com log de aviso
     class MockAudioBridge:
-        def transcribe(self, data, fmt): return "Simulação de transcrição de áudio.", 0.9
+        def __init__(self):
+            logging.warning("[PerceptionAPI] AudioBridge em modo simulado (Mock ativo).")
+        def transcribe(self, data, fmt):
+            return "Simulação de transcrição de áudio.", 0.9
+
     class MockVisionBridge:
-        def process_image(self, data, fmt): return np.zeros(768), ["mock_tag"]
+        def __init__(self):
+            logging.warning("[PerceptionAPI] VisionBridge em modo simulado (Mock ativo).")
+        def process_image(self, data, fmt):
+            return np.zeros(768), ["mock_tag"]
+
     AudioBridge, VisionBridge = MockAudioBridge, MockVisionBridge
 
 logger = logging.getLogger("PerceptionAPI")
@@ -36,9 +42,49 @@ class PerceptionAPI:
 
     def __init__(self, security_service: Optional[Any] = None):
         self.sec = security_service or Security()
-        self.audio_bridge = AudioBridge() # <-- NOVO
-        self.vision_bridge = VisionBridge() # <-- NOVO
+        self.audio_bridge = AudioBridge()
+        self.vision_bridge = VisionBridge()
         logger.info("PerceptionAPI inicializado (Suporte Multimodal Ativo).")
+
+    # ---------------------------------------------------------------------
+    # Funções Auxiliares
+    # ---------------------------------------------------------------------
+
+    def get_raw_input(self, input_data: Any, source_type: str) -> Any:
+        """
+        Captura e normaliza o input multimodal.
+        - Texto → str
+        - Áudio/Imagem → bytes
+        """
+        if source_type == "text":
+            if not isinstance(input_data, str):
+                raise TypeError("get_raw_input: esperado str para texto.")
+            return input_data.strip()
+
+        elif source_type in ["audio", "image"]:
+            if not isinstance(input_data, bytes):
+                raise TypeError(f"get_raw_input: esperado bytes para {source_type}.")
+            return input_data
+
+        else:
+            raise ValueError(f"get_raw_input: tipo desconhecido {source_type}")
+
+    def validate_and_sanitize(self, raw_input: Any, source_type: str) -> Tuple[Any, bool]:
+        """
+        Valida e sanitiza o input.
+        Retorna (input_sanitizado, status_sanitizado).
+        """
+        if source_type == "text":
+            processed = self.sec.sanitize_input(raw_input)
+            if len(processed) > MAX_INPUT_LENGTH:
+                return processed[:MAX_INPUT_LENGTH], False
+            return processed, True
+
+        elif source_type in ["audio", "image"]:
+            # Para multimodal, a validação é delegada aos Bridges
+            return raw_input, True
+
+        return raw_input, False
 
     # ---------------------------------------------------------------------
     # PERCEPÇÃO PRINCIPAL
@@ -48,29 +94,23 @@ class PerceptionAPI:
         self,
         input_data: Any,
         source_type: str = "text",
-        file_format: Optional[str] = None, # <-- NOVO: Auxilia na validação binária
+        file_format: Optional[str] = None,
         context_meta: Optional[Dict[str, Any]] = None
     ) -> Tuple[str, Dict[str, Any]]:
 
         is_sanitized = True
-        extra_multimodal_data: Dict[str, Any] = {} # Para embeddings, confiança, etc.
-        
+        extra_multimodal_data: Dict[str, Any] = {}
+
+        # 1. Captura e sanitização inicial
+        raw_input = self.get_raw_input(input_data, source_type)
+        processed_input, is_sanitized = self.validate_and_sanitize(raw_input, source_type)
+
         # ============================
         # 1. Percepção de TEXTO
         # ============================
         if source_type == "text":
-            if not isinstance(input_data, str):
-                raise TypeError("PerceptionAPI: input_data deve ser str quando source_type='text'")
-
-            raw_text = input_data.strip()
-            # ... (Restante da lógica de sanitização de texto) ...
-            original_length = len(raw_text)
-            processed_text = self.sec.sanitize_input(raw_text)
-
-            if len(processed_text) > MAX_INPUT_LENGTH:
-                processed_text = processed_text[:MAX_INPUT_LENGTH]
-                is_sanitized = False 
-            
+            original_length = len(raw_input)
+            processed_text = processed_input
             processed_length = len(processed_text)
             input_hash = self.sec.hash_state(processed_text)
 
@@ -82,49 +122,36 @@ class PerceptionAPI:
         # 2. Percepção MULTIMODAL
         # ============================
         elif source_type in ["audio", "image"]:
-            
-            if not isinstance(input_data, bytes):
-                raise TypeError(f"PerceptionAPI: input_data deve ser bytes para source_type='{source_type}'")
-
             try:
                 if source_type == "audio":
-                    # 🔒 Validação Binária e Sanitização Real (via Bridge)
-                    transcribed_text, confidence = self.audio_bridge.transcribe(input_data, file_format or "wav")
-                    
-                    # O texto processado é o resultado do STT
-                    processed_text = f"[ÁUDIO TRASNCRITO]: {transcribed_text}"
+                    transcribed_text, confidence = self.audio_bridge.transcribe(processed_input, file_format or "wav")
+                    processed_text = f"[ÁUDIO TRANSCRITO]: {transcribed_text}"
                     extra_multimodal_data["stt_confidence"] = float(confidence)
-                    extra_multimodal_data["transcribed_text"] = transcribed_text # Original transcription
-                    
+                    extra_multimodal_data["transcribed_text"] = transcribed_text
+
                 elif source_type == "image":
-                    # 🔒 Validação Binária e Sanitização Real (via Bridge)
-                    embedding_vector, tags = self.vision_bridge.process_image(input_data, file_format or "jpg")
-                    
-                    # O texto processado é uma descrição/tags para o OL
+                    embedding_vector, tags = self.vision_bridge.process_image(processed_input, file_format or "jpg")
+                    if isinstance(embedding_vector, np.ndarray):
+                        embedding_vector = embedding_vector.tolist()
                     processed_text = f"[IMAGEM DESCRITA]: Tags: {', '.join(tags)}"
                     extra_multimodal_data["image_tags"] = tags
-                    # É vital persistir o vetor no Hippocampus, não apenas o texto:
-                    extra_multimodal_data["vision_embedding"] = embedding_vector.tolist() 
+                    extra_multimodal_data["vision_embedding"] = embedding_vector
 
-                original_length = len(input_data)
+                original_length = len(processed_input)
                 processed_length = len(processed_text)
-                
-                # O Hash é feito no texto processado para fins de PRAG/Governança
                 input_hash = self.sec.hash_state(processed_text)
 
                 logger.info(
-                    f"[Perception] Multimodal '{source_type}' processado. Tags/Confiança anexadas. hash={input_hash[:12]}..."
+                    f"[Perception] Multimodal '{source_type}' processado. hash={input_hash[:12]}..."
                 )
 
             except ValueError as e:
-                # Captura erros de formato/integridade do arquivo binário (Validação)
-                is_sanitized = False # Falha na sanitização/validação binária
+                is_sanitized = False
                 processed_text = f"[ERROR: Falha na validação binária de {source_type}]"
                 input_hash = self.sec.hash_state(processed_text)
-                original_length = len(input_data)
+                original_length = len(processed_input)
                 processed_length = len(processed_text)
                 logger.error(f"[Perception] Falha na validação binária: {e}")
-
 
         # ============================
         # 3. Tipo desconhecido
@@ -138,14 +165,14 @@ class PerceptionAPI:
         meta = {
             "source_type": source_type,
             "timestamp": time.time(),
+            "uuid": str(uuid.uuid4()),
             "processed_hash": input_hash,
-            "sanitized": is_sanitized, 
+            "sanitized": is_sanitized,
             "context": context_meta or {},
             "original_length": original_length,
             "processed_length": processed_length,
         }
-        
-        # Adiciona dados multimodais ao contexto
+
         meta["context"].update(extra_multimodal_data)
 
         return processed_text, meta

@@ -1,12 +1,13 @@
 # core/services/control_bus.py
 """
-ControlBus V1 - Barramento de Controle de Eventos (Pub/Sub)
-Versão final, alinhada com checklist de melhorias.
+ControlBus V2 - Barramento de Controle de Eventos (Pub/Sub)
+Versão estendida com unsubscribe e suporte assíncrono.
 """
 from __future__ import annotations
 import logging
 import time
 import json
+import asyncio
 from typing import Any, Dict, Callable, List
 
 # Fallback Logger
@@ -25,11 +26,18 @@ logger = setup_logger("ControlBus")
 # Definição de eventos críticos
 # -------------------------------------------------------------------
 class SystemEvents:
-    LO_TRIGGERED = "LearningOptimizationTriggered"       
-    ROLLBACK_INITIATED = "RollbackInitiated"             
-    STATE_PERSISTED = "StatePersisted"                   
-    NEW_MEMORY_STORED = "NewMemoryStored"                
-    PARAM_ADJUSTED = "AdaptationParametersAdjusted"      
+    LO_TRIGGERED = "LearningOptimizationTriggered"
+    ROLLBACK_INITIATED = "RollbackInitiated"
+    STATE_PERSISTED = "StatePersisted"
+    NEW_MEMORY_STORED = "NewMemoryStored"
+    PARAM_ADJUSTED = "AdaptationParametersAdjusted"
+    SNAPSHOT_SAVED = "SnapshotSaved"
+    ROLLBACK_REQUESTED = "RollbackRequested"
+    VISUALIZATION_REQUESTED = "VisualizationRequested"
+    VISUALIZATION_READY = "VisualizationReady"
+    VISUALIZATION_FAILED = "VisualizationFailed"
+    DEBUG_VISUALIZATION_REQUESTED = "DebugVisualizationRequested"
+
 
 # -------------------------------------------------------------------
 # ControlBus Final
@@ -47,7 +55,7 @@ class ControlBus:
     # Inscrição (Subscription)
     # ---------------------------------------------------------
     def subscribe(self, event_type: str, handler: Callable[[Dict[str, Any]], None]):
-        if not hasattr(SystemEvents, event_type) and event_type not in vars(SystemEvents).values():
+        if event_type not in vars(SystemEvents).values():
             raise ValueError(f"Event type '{event_type}' is not defined in SystemEvents.")
 
         if event_type not in self._subscribers:
@@ -63,9 +71,23 @@ class ControlBus:
             }))
 
     # ---------------------------------------------------------
-    # Publicação (Publication)
+    # Cancelar inscrição (Unsubscribe)
     # ---------------------------------------------------------
-    def publish(self, event_type: str, payload: Dict[str, Any], source_module: str = "unknown"):
+    def unsubscribe(self, event_type: str, handler: Callable[[Dict[str, Any]], None]):
+        if event_type in self._subscribers:
+            if handler in self._subscribers[event_type]:
+                self._subscribers[event_type].remove(handler)
+                logger.debug(json.dumps({
+                    "event": "ControlBus_unsubscribe",
+                    "event_type": event_type,
+                    "handler": handler.__qualname__,
+                    "timestamp": time.time()
+                }))
+
+    # ---------------------------------------------------------
+    # Publicação (Publication) - Assíncrona
+    # ---------------------------------------------------------
+    async def publish(self, event_type: str, payload: Dict[str, Any], source_module: str = "unknown"):
         if not isinstance(payload, dict):
             raise ValueError(f"Payload must be dict, got {type(payload)}")
 
@@ -93,10 +115,16 @@ class ControlBus:
         else:
             logger.debug(json.dumps(event_record))
 
-        # Executa handlers isoladamente
+        # Executa handlers de forma assíncrona
+        tasks = []
         for handler in listeners:
             try:
-                handler(payload)
+                if asyncio.iscoroutinefunction(handler):
+                    tasks.append(asyncio.create_task(handler(payload)))
+                else:
+                    # Executa em thread separada para não bloquear
+                    loop = asyncio.get_event_loop()
+                    tasks.append(loop.run_in_executor(None, handler, payload))
             except Exception as e:
                 logger.error(json.dumps({
                     "event": "ControlBus_handler_error",
@@ -105,3 +133,6 @@ class ControlBus:
                     "error": str(e),
                     "timestamp": time.time()
                 }))
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)

@@ -35,42 +35,34 @@ Agi_mire/
 │   └── system.yaml
 │
 ├── core/
-│     ├── governance/          
-│     │     └── prag.py     
-│     │ 
-│     ├── intelligence/             
-│     │     └── ppo.py 
-│     │   
-│     ├── memory/
-│     │     └── hippocampus.py 
-│     │   
-│     ├── orchestration/ 
-│     │     └── system_loop.py 
-│     │   
-│     └── services/
-│           ├── multimodal/
-│           │       ├── audio_bridge.py
-│           │       └── vision_bridge.py
-│           │ 
-│           ├── auxiliary_system/
-│           │       ├── alert.py
-│           │       ├── adaptation.py
-│           │       ├── analytics.py           
-│           │       ├── monitor.py         
-│           │       ├── nlp_bridge.py         
-│           │       ├── security.py        
-│           │       ├── perception.py       
-│           │       ├── utils.py     
-│           │       ├── vector_index.py     
-│           │       ├── control_bus.py         
-│           │       └── attention.py
-│           │  
-│           ├── mch.py
-│           ├── oa.py
-│           ├── ol.py
-│           ├── pcvs.py
-│           ├── regvet.py
-│           └── simlog.py
+├── orchestration/
+│   ├── mch.py
+│   └── system_loop.py
+├── intelligence/
+│   ├── oa.py
+│   ├── ol.py
+│   └── ppo.py
+├── governance/
+│   ├── regvet.py
+│   ├── simlog.py
+│   └── prag.py
+├── services/
+│   ├── pcvs.py
+│   ├── monitor.py
+│   ├── analytics.py
+│   ├── alert.py
+│   ├── adaptation.py
+│   ├── attention.py
+│   ├── control_bus.py
+│   ├── nlp_bridge.py
+│   ├── perception.py
+│   ├── security.py
+│   ├── utils.py
+│   └── multimodal/
+│       ├── audio_bridge.py
+│       └── vision_bridge.py
+├── memory/
+│   └── hippocampus.py
 │
 ├── demo/                     # Demonstrações completas
 │   ├── rollback_demo.py

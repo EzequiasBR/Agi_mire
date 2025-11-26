@@ -32,7 +32,7 @@ import numpy as np
 
 # Try to reuse utils
 try:
-    from .utils import _normalize_vector, hash_state, setup_logger
+    from ..services.utils import _normalize_vector, setup_logger
 except Exception:
     def _normalize_vector(v: np.ndarray) -> np.ndarray:
         v = np.asarray(v, dtype=np.float32)
@@ -41,9 +41,7 @@ except Exception:
             return np.zeros_like(v)
         return v / n
 
-    def hash_state(obj: Dict[str, Any]) -> str:
-        return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()
-
+    
     def setup_logger(name: str) -> logging.Logger:
         logger = logging.getLogger(name)
         if not logger.handlers:

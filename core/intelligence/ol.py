@@ -20,7 +20,7 @@ import numpy as np
 
 # Try to import service helpers if available (project layout core/services)
 try:
-    from .services.utils import setup_logger, _normalize_vector, save_json, load_json
+    from ..services.utils import setup_logger, _normalize_vector, save_json, load_json
 except Exception:
     # Minimal fallbacks
     def setup_logger(name: str) -> logging.Logger:

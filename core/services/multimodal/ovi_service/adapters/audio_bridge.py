@@ -11,7 +11,7 @@ import json
 from typing import Any, Dict
 
 try:
-    from ..utils import setup_logger, config
+    from ....utils import setup_logger
 except ImportError:
     # Fallback
     def setup_logger(name):
