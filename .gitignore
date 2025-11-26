@@ -1,0 +1,61 @@
+# Virtual env
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Logs & Audit
+*.log
+logs/
+audit/
+
+#pcvs & test
+pcvs/
+tests/
+
+# Coverage & Test
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Snapshots & Data
+monitor_snapshot.json
+snapshots/
+snapshots_test_tmp/
+relatorio.txt
+*.tmp
+*.tmp
+*.out
+*.dat
+data/audit_log.json
+data/memories.json
+data/pcvs.json
+data/vector_db/
+data/
+checkpoints/
+
+# Config (local only)
+.env
+configs/
+config.json
+config.yaml
+config.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+*.DS_Store
+Thumbs.db

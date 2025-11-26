@@ -1,0 +1,29 @@
+networkx               # para o grafo simbólico (OA)
+pyyaml
+tqdm
+
+rich
+  # opcional, mas preciso para embeddings reais
+numpy
+pandas 
+scikit-learn 
+scipy 
+joblib
+matplotlib
+seaborn
+pillow
+torch==2.5.1
+torchvision
+torchaudio
+tensorflow
+keras
+sympy
+nltk
+spacy
+sentence-transformers
+transformers
+openai
+requests
+beautifulsoup4
+streamlit
+pytest
