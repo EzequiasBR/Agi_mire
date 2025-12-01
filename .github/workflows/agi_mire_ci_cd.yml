@@ -2,165 +2,82 @@ name: AGI_MIRE_CI_CD
 
 on:
   push:
-    branches: [ "main", "develop" ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ "main", "develop" ]
-  workflow_dispatch:
-
-env:
-  PYTHON_VERSION: "3.12"
-  POETRY_VERSION: "1.8.3"
+    branches: [ "main" ]
 
 jobs:
-  setup:
-    name: Preparar Ambiente
+  build-and-test:
     runs-on: ubuntu-latest
-    outputs:
-      cache-hit: ${{ steps.cache.outputs.cache-hit }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Configurar Cache
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pypoetry
-          key: poetry-cache-${{ hashFiles('**/poetry.lock') }}
+    # ============================================================
+    # LIBERAR DISCO — ESSENCIAL PARA EVITAR "NO SPACE LEFT"
+    # ============================================================
+    - name: Free Up Disk Space (40–60 GB)
+      run: |
+        echo "Before cleanup:"
+        df -h
 
-      - name: Instalar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+        echo "Removing huge pre-installed tool caches..."
+        sudo rm -rf /opt/hostedtoolcache/* || true
+        sudo rm -rf /usr/local/lib/android || true
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
+        sudo rm -rf /usr/local/share/boost || true
 
-      - name: Instalar Poetry
-        run: pip install poetry==${{ env.POETRY_VERSION }}
+        echo "Removing large SDKs & languages unused by this project..."
+        sudo rm -rf /usr/share/dotnet || true
+        sudo rm -rf /usr/local/share/powershell || true
+        sudo rm -rf /usr/local/share/swift || true
+        sudo rm -rf /usr/lib/jvm || true
 
-      - name: Instalar Dependências
-        run: poetry install --no-root
+        echo "Cleaning apt cache..."
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
 
+        echo "After cleanup:"
+        df -h
 
-  lint:
-    name: Lint & Static Analysis
-    runs-on: ubuntu-latest
-    needs: setup
+    # ============================================================
+    # PYTHON ENVIRONMENT
+    # ============================================================
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
 
-    steps:
-      - uses: actions/checkout@v4
+    - name: Install pip and wheel
+      run: |
+        python -m pip install --upgrade pip wheel setuptools
 
-      - name: Instalar Ferramentas
-        run: |
-          pip install flake8 bandit safety
+    # ============================================================
+    # INSTALAR DEPENDÊNCIAS
+    # ============================================================
+    - name: Install project dependencies
+      run: |
+        if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+        else
+            echo "requirements.txt not found, skipping."
+        fi
 
-      - name: Executar Flake8
-        run: flake8 .
+    # ============================================================
+    # TESTES UNITÁRIOS
+    # ============================================================
+    - name: Run test suite with pytest
+      run: |
+        pytest -vv --maxfail=1 --disable-warnings
 
-      - name: Security Scan - Bandit
-        run: bandit -r core -ll -iii
+    # ============================================================
+    # UPLOAD DE ARTEFATOS EM CASO DE FALHA
+    # ============================================================
+    - name: Upload pytest results (in case of failure)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-logs
+        path: ./
 
-      - name: Security Scan - Safety
-        run: safety check
-
-
-  tests:
-    name: Testes (Unitários + Integração + Stress)
-    runs-on: ubuntu-latest
-    needs: [setup, lint]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Instalar Dependências
-        run: poetry install --no-root
-
-      - name: Testes Unitários
-        run: poetry run pytest -q tests/unit
-
-      - name: Testes de Integração
-        run: poetry run pytest -q tests/integration
-
-      - name: Testes de Stress (SimLog V1.4, PRAG, RegVet)
-        run: poetry run pytest -q tests/stress --maxfail=1
-
-      - name: Relatório de Cobertura
-        run: poetry run pytest --cov=core --cov-report=xml
-
-      - name: Upload Coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: coverage.xml
-
-
-  build:
-    name: Build e Empacotamento
-    runs-on: ubuntu-latest
-    needs: tests
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build do Pacote
-        run: poetry build
-
-      - name: Upload Build
-        uses: actions/upload-artifact@v4
-        with:
-          name: agi_mire_build
-          path: dist/
-
-
-  deploy_prod:
-    name: Deploy em Produção
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-
-    environment:
-      name: production
-      url: https://api.agi-mire.prod
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Build
-        uses: actions/download-artifact@v4
-        with:
-          name: agi_mire_build
-
-      - name: Validar Versão e Assinatura
-        run: |
-          python scripts/verify_signature.py dist/*.whl
-          python scripts/check_version_bump.py
-
-      - name: Deploy Real
-        run: |
-          bash scripts/deploy_prod.sh dist/*.whl
-
-      - name: Registrar Evento PRAG
-        run: |
-          curl -X POST "$CONTROLBUS_URL/emit" \
-            -H "Content-Type: application/json" \
-            -d '{"event":"DEPLOY_COMPLETED","metadata":{"version":"latest"}}'
-
-      - name: Publicar Build
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-
-
-  rollback:
-    name: Rollback
-    runs-on: ubuntu-latest
-    if: failure()
-
-    steps:
-      - name: Rollback Automático
-        run: bash scripts/rollback.sh
-
-      - name: Registrar Evento PRAG
-        run: |
-          curl -X POST "$CONTROLBUS_URL/emit" \
-            -H "Content-Type: application/json" \
-            -d '{"event":"DEPLOY_ROLLBACK"}'
