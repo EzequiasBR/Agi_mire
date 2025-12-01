@@ -13,7 +13,7 @@ import numpy as np
 
 # Importar setup_logger da mesma pasta services
 try:
-    from .utils import setup_logger
+    from ..utils import setup_logger
 except ImportError:
     # Fallback simples
     def setup_logger(name):

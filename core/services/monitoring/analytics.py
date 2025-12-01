@@ -1,21 +1,30 @@
-# core/services/analytics.py
 """
 Analytics Service V3 - Cálculo de Métricas Sistêmicas
 
 Funções:
-- compute_system_health(C_med, D_var) -> H_sist
+- compute_system_health(C_med, D_med, rollback_rate) -> H_sist
 - compute_volatility(C_var, rollback_rate) -> V_sist
-- compute_system_energy(LO_rate, E_primal) -> E_sist
+- compute_system_energy(LO_rate, C_med) -> E_sist
 
 """
 from __future__ import annotations
 import logging
 import time
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, TYPE_CHECKING
 import numpy as np
+import asyncio # Necessário para rodar o bloco de teste
+
+# Mocks de dependências
+class SystemEvents:
+    STATE_PERSISTED = "STATE_PERSISTED"
+if TYPE_CHECKING:
+    class ControlBus:
+        async def publish(self, event_type: str, payload: Dict[str, Any], source_module: str = "unknown") -> None: ...
+        def subscribe(self, event: str, handler: Any) -> None: ...
+# Fim do Mock de dependências
 
 try:
-    from .utils import setup_logger
+    from ..utils import setup_logger
 except ImportError:
     # Minimal Fallback
     def setup_logger(name):
@@ -35,14 +44,21 @@ class Analytics:
     baseado em telemetria do sistema (Confiança, Divergência, Taxas de Ação).
     """
 
-    def __init__(self):
+    def __init__(self, control_bus: 'ControlBus'): # Injeção de dependência ControlBus
+        self._control_bus = control_bus
         # Janela de análise móvel para o cálculo de métricas
         self.window_size: int = 100
         self.confidence_history: List[float] = []
         self.divergence_history: List[float] = []
         self.lo_trigger_history: List[int] = [] # 1=triggered, 0=skipped
         self.rollback_history: List[int] = [] # 1=triggered, 0=skipped
-        self.last_metrics: Dict[str, float] = {"H": 0.5, "V": 0.5, "E": 0.5}
+        
+        # Telemetria detalhada (Ajuste 1: Inclui estatísticas intermediárias)
+        self.last_metrics: Dict[str, float] = {
+            "H": 0.5, "V": 0.5, "E": 0.5,
+            "C_med": 0.5, "D_med": 0.5, "C_var": 0.0,
+            "rollback_rate": 0.0, "lo_rate": 0.0
+        }
 
         logger.info("Analytics Service initialized.")
 
@@ -50,9 +66,10 @@ class Analytics:
     # Funções de Cálculo Principal (Normalizadas 0 a 1)
     # ---------------------------------------------------------
 
-    def compute_metrics(self, new_C: float, new_D: float, rollback_triggered: bool, lo_triggered: bool) -> Dict[str, float]:
+    async def compute_metrics(self, new_C: float, new_D: float, rollback_triggered: bool, lo_triggered: bool) -> Dict[str, float]:
         """
-        Atualiza o histórico e calcula as novas métricas sistêmicas.
+        Atualiza o histórico, calcula as novas métricas sistêmicas e publica o estado.
+        Função alterada para ASYNC.
         """
         # Atualiza Histórico
         self.confidence_history.append(new_C)
@@ -79,10 +96,23 @@ class Analytics:
         V_sist = self._compute_volatility(C_var, rollback_rate)
         E_sist = self._compute_system_energy(lo_rate, C_med)
 
-        self.last_metrics = {"H": H_sist, "V": V_sist, "E": E_sist}
+        # Atualiza last_metrics com detalhes (Ajuste 1)
+        self.last_metrics.update({
+            "H": H_sist, "V": V_sist, "E": E_sist,
+            "C_med": C_med, "D_med": D_med, "C_var": C_var,
+            "rollback_rate": rollback_rate, "lo_rate": lo_rate
+        })
+        
+        # Ajuste 2: Integração com ControlBus
+        await self._control_bus.publish(
+            SystemEvents.STATE_PERSISTED, 
+            self.last_metrics, # Publica as métricas calculadas
+            source_module="AnalyticsService"
+        )
         
         logger.debug("Metrics computed: H=%.3f, V=%.3f, E=%.3f", H_sist, V_sist, E_sist)
-        return self.last_metrics
+        # Retorna apenas as métricas principais para o chamador, se necessário
+        return {"H": H_sist, "V": V_sist, "E": E_sist}
 
     def _compute_system_health(self, C_med: float, D_med: float, rollback_rate: float) -> float:
         """
@@ -90,8 +120,6 @@ class Analytics:
         e a Taxa de Rollback for baixa.
         H ≈ 0.6 * C_med + 0.3 * (1 - D_med) + 0.1 * (1 - rollback_rate)
         """
-        # (1 - D_med) é a Coerência Média
-        # (1 - rollback_rate) é a Estabilidade Operacional
         health = 0.6 * C_med + 0.3 * (1.0 - D_med) + 0.1 * (1.0 - rollback_rate)
         return np.clip(health, 0.0, 1.0)
 
@@ -101,8 +129,7 @@ class Analytics:
         ou se a Taxa de Rollback for alta (instabilidade).
         V ≈ C_var * 5 + rollback_rate * 0.5 (normalizado)
         """
-        # C_var (variância da confiança) é tipicamente pequeno, por isso o fator 5
-        volatility = np.clip(C_var * 5.0 + rollback_rate * 0.5, 0.0, 1.0)
+        volatility = C_var * 5.0 + rollback_rate * 0.5
         return np.clip(volatility, 0.0, 1.0)
 
     def _compute_system_energy(self, lo_rate: float, C_med: float) -> float:
@@ -111,7 +138,6 @@ class Analytics:
         se a Confiança Média for muito baixa (necessidade urgente de adaptação).
         E ≈ lo_rate * 0.7 + (1 - C_med) * 0.3
         """
-        # (1 - C_med) é a necessidade de aprendizado (Exploração)
         energy = lo_rate * 0.7 + (1.0 - C_med) * 0.3
         return np.clip(energy, 0.0, 1.0)
     
@@ -120,7 +146,10 @@ class Analytics:
     # ---------------------------------------------------------
 
     def get_metrics(self) -> Dict[str, float]:
-        """Retorna as últimas métricas calculadas."""
+        """
+        Ajuste 3: Retorna todas as métricas calculadas (incluindo H e V), 
+        atendendo ao Adaptation Service sem necessidade de recalculo.
+        """
         return self.last_metrics
 
     def snapshot_state(self) -> Dict[str, Any]:
@@ -131,34 +160,55 @@ class Analytics:
             "divergence_history": self.divergence_history,
             "lo_trigger_history": self.lo_trigger_history,
             "rollback_history": self.rollback_history,
-            "last_metrics": self.last_metrics
+            "last_metrics": self.last_metrics # Telemetria detalhada persistida
         }
-    
 # ---------------------------------------------------------
 # Teste Rápido
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    analytics = Analytics()
     
-    # Simulação de 100 ciclos estáveis (C alto, D baixo, sem ações)
-    for i in range(50):
-        metrics = analytics.compute_metrics(new_C=0.95 + 0.01 * np.random.randn(), 
-                                            new_D=0.05 + 0.01 * np.random.randn(), 
-                                            rollback_triggered=False, 
-                                            lo_triggered=False)
-    print("--- Cenário 1: Estabilidade Total ---")
-    print(f"H (Saúde) esperada alta: {metrics['H']:.3f}")
-    print(f"V (Volatilidade) esperada baixa: {metrics['V']:.3f}")
-    print(f"E (Energia) esperada baixa: {metrics['E']:.3f}")
+    # Mock do ControlBus para teste
+    class MockControlBus:
+        async def publish(self, event_type: str, payload: Dict[str, Any], source_module: str = "unknown"):
+            print(f"[ControlBus: {source_module}] Publicado {event_type}. H={payload['H']:.3f}, V={payload['V']:.3f}")
     
-    # Simulação de 10 ciclos de crise (C baixo, D alto, com rollback e LO forçado)
-    for i in range(10):
-        metrics = analytics.compute_metrics(new_C=0.40, 
-                                            new_D=0.60, 
-                                            rollback_triggered=(i % 3 == 0), 
-                                            lo_triggered=True)
+    async def demo():
+        control_bus = MockControlBus()
+        analytics = Analytics(control_bus=control_bus)
         
-    print("\n--- Cenário 2: Crise/Caos ---")
-    print(f"H (Saúde) esperada baixa: {metrics['H']:.3f}")
-    print(f"V (Volatilidade) esperada alta: {metrics['V']:.3f}")
-    print(f"E (Energia) esperada alta: {metrics['E']:.3f}")
+        # Simulação de 50 ciclos estáveis
+        for i in range(50):
+            metrics_HVE = await analytics.compute_metrics(
+                new_C=0.95 + 0.01 * np.random.randn(), 
+                new_D=0.05 + 0.01 * np.random.randn(), 
+                rollback_triggered=False, 
+                lo_triggered=False
+            )
+        
+        print("\n--- Cenário 1: Estabilidade Total (Publicado no ControlBus) ---")
+        metrics = analytics.get_metrics()
+        print(f"H (Saúde) esperada alta: {metrics['H']:.3f}")
+        print(f"V (Volatilidade) esperada baixa: {metrics['V']:.3f}")
+        print(f"Detalhes Telemetria (C_med, D_med): {metrics['C_med']:.3f}, {metrics['D_med']:.3f}")
+        
+        # Simulação de 10 ciclos de crise
+        for i in range(10):
+            metrics_HVE = await analytics.compute_metrics(
+                new_C=0.40, 
+                new_D=0.60, 
+                rollback_triggered=(i % 3 == 0), 
+                lo_triggered=True
+            )
+            
+        print("\n--- Cenário 2: Crise/Caos (Publicado no ControlBus) ---")
+        metrics = analytics.get_metrics()
+        print(f"H (Saúde) esperada baixa: {metrics['H']:.3f}")
+        print(f"V (Volatilidade) esperada alta: {metrics['V']:.3f}")
+        print(f"Taxas de Ação (Rollback/LO): {metrics['rollback_rate']:.3f}, {metrics['lo_rate']:.3f}")
+        
+        # Simular chamada do Adaptation Service
+        print("\n--- Chamada do Adaptation Service ---")
+        adapter_input = analytics.get_metrics()
+        print(f"Adaptation input: H={adapter_input['H']:.3f}, V={adapter_input['V']:.3f}")
+
+    asyncio.run(demo())

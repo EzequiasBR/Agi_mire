@@ -1,29 +1,46 @@
-networkx               # para o grafo simbólico (OA)
-pyyaml
-tqdm
 
-rich
-  # opcional, mas preciso para embeddings reais
-numpy
-pandas 
-scikit-learn 
-scipy 
+
+# Núcleo científico e numérico
+numpy>=1.24.0
+scipy>=1.11.0
+pandas>=2.1.0
+
+# Machine Learning / Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+tensorflow>=2.15.0   # aparece nos seus logs, então incluí
+
+# NLP e Transformers
+transformers>=4.35.0
+sentencepiece>=0.1.99
+datasets>=2.14.0
+
+# Indexação vetorial e memória semântica
+faiss-cpu>=1.7.4      # se usar GPU, trocar por faiss-gpu
+scikit-learn>=1.3.0
+
+# Utilitários de persistência e auditoria
+jsonschema>=4.19.0
+python-dotenv>=1.0.0
+PyYAML>=6.0.1
+
+# Serviços auxiliares
+requests>=2.31.0
+tqdm>=4.66.0
+networkx               # para o grafo simbólico (OA) 
 joblib
 matplotlib
 seaborn
 pillow
-torch==2.5.1
-torchvision
-torchaudio
-tensorflow
 keras
 sympy
 nltk
 spacy
 sentence-transformers
-transformers
 openai
-requests
 beautifulsoup4
 streamlit
 pytest
+rich
+pytest-asyncio>=0.21.0

@@ -89,9 +89,9 @@ class Monitor:
             "generated_at": time.time(),
         }
         try:
-            with open("monitor_report.json", "w", encoding="utf-8") as f:
+            with open("data/logs/monitor_report.json", "w", encoding="utf-8") as f:
                 json.dump(report, f, indent=2)
-            logger.info("[Monitor] Relatório exportado para monitor_report.json")
+            logger.info("[Monitor] Relatório exportado para data/logs/monitor_report.json")
         except Exception as e:
             logger.error(f"[Monitor] Falha ao exportar relatório: {e}")
 

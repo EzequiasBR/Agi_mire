@@ -44,6 +44,9 @@ data/pcvs.json
 data/vector_db/
 data/
 checkpoints/
+memoria_agimire/
+simulations/
+tools/
 
 # Config (local only)
 .env

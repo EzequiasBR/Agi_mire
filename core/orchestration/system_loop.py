@@ -4,17 +4,19 @@ import time
 import logging
 from typing import Dict, Any, Optional
 
+
+from core.config_loader import ConfigLoader
 from core.governance.prag import PRAG
 from core.governance.simlog import SimLog
 from core.intelligence.ppo import PPO
 from core.orchestration.mch import MCH
-from core.services.control_bus import ControlBus, SystemEvents
-from core.services.monitor import Monitor
+from core.orchestration.control_bus import ControlBus, SystemEvents
+from core.services.monitoring.monitor import Monitor
 from core.services.pcvs import PCVS
-from core.services.perception import PerceptionAPI
+from core.services.io.perception import PerceptionAPI
 
 from ..services.utils import timestamp_id, hash_state, divergence_from_cosine
-from core.config_loader import ConfigLoader
+
 
 class SystemLoop:
     """

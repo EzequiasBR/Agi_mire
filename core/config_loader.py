@@ -1,85 +1,66 @@
-# core/config_loader.py
-"""
-Utilitário para carregar e inicializar configurações do MIHE-AGI.
-Inclui: system.yaml, thresholds.json e logging.json.
-Integra logger e fornece objetos de configuração prontos para uso nos módulos core.
-"""
-
+import os
 import json
-import yaml
 import logging
-import logging.config
-from pathlib import Path
-from typing import Dict, Any
+import yaml
+from typing import Any, Dict, Optional
 
-def load_yaml(path: str) -> Dict[str, Any]:
-    """Carrega um arquivo YAML e retorna um dicionário."""
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-def load_json(path: str) -> Dict[str, Any]:
-    """Carrega um arquivo JSON e retorna um dicionário."""
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def setup_logging(logging_json_path: str) -> logging.Logger:
-    """Configura logger global a partir de arquivo JSON de logging."""
-    config_path = Path(logging_json_path)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Arquivo de logging não encontrado: {logging_json_path}")
-    with open(config_path, "r", encoding="utf-8") as f:
-        config_dict = json.load(f)
-    logging.config.dictConfig(config_dict)
-    return logging.getLogger("MIHE-AGI")  # logger raiz principal
 
 class ConfigLoader:
     """
-    Classe utilitária para carregar todas as configurações do MIHE-AGI.
-    - system.yaml
-    - thresholds.json
-    - logging.json
+    Carrega arquivos de configuração JSON e YAML de um diretório específico.
+    Permite acesso rápido a thresholds ou outros parâmetros por módulo.
     """
 
+    SUPPORTED_EXTENSIONS = (".json", ".yaml", ".yml")
+
     def __init__(self, config_dir: str = "configs"):
-        self.config_dir = Path(config_dir)
-        self.system: Dict[str, Any] = {}
-        self.thresholds: Dict[str, Any] = {}
-        self.logger: logging.Logger = None
+        self.config_dir = os.path.abspath(config_dir)
+        self.logger = logging.getLogger("ConfigLoader")
+        if not self.logger.handlers:
+            ch = logging.StreamHandler()
+            ch.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s"))
+            self.logger.addHandler(ch)
+        self.logger.setLevel(logging.INFO)
+        self.configs: Dict[str, Dict[str, Any]] = {}
 
     def load_all(self):
-        """Carrega todos os arquivos de configuração e inicializa logger."""
-        # 1️⃣ system.yaml
-        system_path = self.config_dir / "system.yaml"
-        if not system_path.exists():
-            raise FileNotFoundError(f"system.yaml não encontrado em {system_path}")
-        self.system = load_yaml(str(system_path))
+        """Carrega todos os arquivos JSON/YAML do diretório."""
+        if not os.path.isdir(self.config_dir):
+            self.logger.warning(f"Diretório de configs não existe: {self.config_dir}")
+            return
 
-        # 2️⃣ thresholds.json
-        thresholds_path = self.config_dir / "thresholds.json"
-        if not thresholds_path.exists():
-            raise FileNotFoundError(f"thresholds.json não encontrado em {thresholds_path}")
-        self.thresholds = load_json(str(thresholds_path))
+        for fname in os.listdir(self.config_dir):
+            path = os.path.join(self.config_dir, fname)
+            if not fname.endswith(self.SUPPORTED_EXTENSIONS):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    if fname.endswith(".json"):
+                        data = json.load(f)
+                    else:
+                        data = yaml.safe_load(f)
+                    self.configs[fname] = data
+                    self.logger.info(f"Config carregada: {fname}")
+            except Exception as e:
+                self.logger.error(f"Erro ao carregar config {fname}: {e}")
 
-        # 3️⃣ logging.json
-        logging_path = self.config_dir / "logging.json"
-        if not logging_path.exists():
-            raise FileNotFoundError(f"logging.json não encontrado em {logging_path}")
-        self.logger = setup_logging(str(logging_path))
-        self.logger.info("✅ Configurações carregadas com sucesso.")
+    def get(self, name: str) -> Optional[Dict[str, Any]]:
+        """Retorna toda a configuração de um arquivo específico, sem extensão."""
+        for fname, data in self.configs.items():
+            base = os.path.splitext(fname)[0]
+            if base == name:
+                return data
+        self.logger.warning(f"Config {name} não encontrada")
+        return None
 
     def get_module_thresholds(self, module_name: str) -> Dict[str, Any]:
-        """Retorna thresholds específicos para um módulo (PPO, PRAG, etc.)"""
-        return self.thresholds.get(module_name, {})
+        """Retorna thresholds específicos de um módulo, vazio se não existir."""
+        cfg = self.get(module_name)
+        if cfg and isinstance(cfg, dict):
+            return cfg.get("thresholds", {})
+        return {}
 
-    def get_system_param(self, param_path: str, default=None):
-        """
-        Busca um parâmetro dentro de system.yaml usando notação 'modules.OL.dim'
-        """
-        keys = param_path.split(".")
-        current = self.system
-        try:
-            for k in keys:
-                current = current[k]
-            return current
-        except KeyError:
-            return default
+    def reload(self):
+        """Recarrega todas as configs do diretório."""
+        self.configs.clear()
+        self.load_all()

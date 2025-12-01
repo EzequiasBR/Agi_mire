@@ -41,7 +41,9 @@ class PPO:
         self.last_trigger_time: Optional[float] = None
         self.last_reason: Optional[str] = None
         self.history: List[Dict[str, Any]] = []
-        self.rng = np.random.RandomState(rng_seed if rng_seed is not None else int(time.time() * 1000) % (2**32 - 1))
+        # Garante seed válido para RandomState
+        valid_seed = (rng_seed if rng_seed is not None else int(time.time() * 1000)) % (2**32 - 1)
+        self.rng = np.random.RandomState(valid_seed)
 
         logger.info(f"PPO session {self.session_id} initialized | tau={self.tau}, cost_budget={self.cost_budget}")
 
@@ -102,38 +104,52 @@ class PPO:
     # Core trigger
     # -----------------------------
     def trigger(self, D: float, C: float, E_sistemica: float, cost_estimate: Optional[float] = None) -> bool:
-        # Valida inputs
-        D = self._validate_threshold(D, "D")
-        C = self._validate_threshold(C, "C")
-        E_sistemica = self._validate_threshold(E_sistemica, "E_sistemica")
+            # Valida inputs
+            D = self._validate_threshold(D, "D")
+            C = self._validate_threshold(C, "C")
+            E_sistemica = self._validate_threshold(E_sistemica, "E_sistemica")
 
-        coherence_condition = (D < 0.20 and C > 0.80)
-        system_error_condition = (E_sistemica > self.tau)
-        logical_trigger = coherence_condition or system_error_condition
+            # 1. Condição de Estagnação (Trigger de Inovação Forçada)
+            # (Divergência Baixa E Certeza Alta) -> Sistema está 'preso' em uma resposta.
+            stagnation_condition = (D < 0.20 and C > 0.80) 
 
-        if not logical_trigger:
-            self.last_reason = "logical_conditions_not_met"
-            self._report_monitor(False, D, C, E_sistemica)
-            return False
+            # 2. Condição de Instabilidade (Trigger de Correção)
+            # (Erro Sistêmico Acima do Limiar) -> O sistema está falhando.
+            system_error_condition = (E_sistemica > self.tau)
+            
+            # O PPO é acionado se houver Estagnação OU Erro.
+            logical_trigger = stagnation_condition or system_error_condition
 
-        allowed, details = self.justify_ontogenesis(cost_estimate)
-        if not allowed:
-            self.last_reason = f"cost_rejected:{details.get('reason')}"
-            self._report_monitor(False, D, C, E_sistemica, details)
-            return False
+            if not logical_trigger:
+                self.last_reason = "logical_conditions_not_met"
+                self._report_monitor(False, D, C, E_sistemica)
+                return False
 
-        now = time.time()
-        if self.last_trigger_time and (now - self.last_trigger_time) < self.cooldown_s:
-            self.last_reason = "cooldown_active"
-            self._report_monitor(False, D, C, E_sistemica, details)
-            return False
+            allowed, details = self.justify_ontogenesis(cost_estimate)
+            if not allowed:
+                self.last_reason = f"cost_rejected:{details.get('reason')}"
+                self._report_monitor(False, D, C, E_sistemica, details)
+                return False
 
-        reason = "coherence" if coherence_condition else "system_error"
-        reason += ";cost_ok" if allowed else ";cost_denied"
-        self.last_reason = reason
+            now = time.time()
+            if self.last_trigger_time and (now - self.last_trigger_time) < self.cooldown_s:
+                self.last_reason = "cooldown_active"
+                self._report_monitor(False, D, C, E_sistemica, details)
+                return False
 
-        self._report_monitor(True, D, C, E_sistemica, details)
-        return True
+            if stagnation_condition:
+                reason = "stagnation_innovation_forced"
+            elif system_error_condition:
+                reason = "system_error_correction"
+            else:
+                reason = "triggered_by_unknown" # Fallback
+                
+            reason += ";cost_ok" if allowed else ";cost_denied"
+            self.last_reason = reason
+
+            self.last_trigger_time = now # Aplicar o cooldown somente se o trigger for executado.
+            self._report_monitor(True, D, C, E_sistemica, details)
+            return True
 
     # -----------------------------
     # MonitorService reporting
@@ -159,7 +175,8 @@ class PPO:
     # -----------------------------
     def propose_changes(self, context: Optional[Dict[str, Any]] = None, n_proposals: int = 3) -> List[Dict[str, Any]]:
         proposals: List[Dict[str, Any]] = []
-        base_seed = int(time.time() * 1000) ^ (len(self.history) << 4)
+        # Seed corrigido para intervalo válido
+        base_seed = (int(time.time() * 1000) ^ (len(self.history) << 4)) % (2**32 - 1)
         rng = np.random.RandomState(base_seed)
         for i in range(n_proposals):
             est_cost = float(max(0.01, rng.rand() * (self.cost_budget * 3)))
